@@ -7,7 +7,6 @@ import (
 )
 
 func main() {
-	unusedVariable := 42
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "OK - CI-CD Failure Explainer service is running")
 	})
