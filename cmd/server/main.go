@@ -8,7 +8,6 @@ import (
 )
 
 func main() {
-	unusedvar := 42
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", api.HealthHandler)
 	mux.HandleFunc("/analyze-failure", api.AnalyzeFailureHandler)
