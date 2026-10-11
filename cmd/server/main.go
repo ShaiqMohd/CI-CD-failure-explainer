@@ -1,18 +1,20 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/api"
 )
 
 func main() {
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "OK - CI-CD Failure Explainer service is running")
-	})
+	unusedvar := 42
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", api.HealthHandler)
+	mux.HandleFunc("/analyze-failure", api.AnalyzeFailureHandler)
 
-	log.Println("Server starting on: 8081")
-	if err := http.ListenAndServe(":8081", nil); err != nil {
+	log.Println("Server starting on :8081")
+	if err := http.ListenAndServe(":8081", mux); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -17,12 +17,29 @@ pipeline {
 
     post {
         failure {
-            echo '=== BUILD FAILED: capturing details ==='
-            echo "Job: ${env.JOB_NAME}"
-            echo "Build number: ${env.BUILD_NUMBER}"
-            echo "Build URL: ${env.BUILD_URL}"
-            bat 'if exist build.log type build.log'
-            bat 'if exist test.log type test.log'
+            echo '=== BUILD FAILED: sending log to explainer service ==='
+            powershell '''
+                $log = ""
+                foreach ($f in "build.log", "test.log") {
+                    if (Test-Path $f) { $log += Get-Content $f -Raw }
+                }
+
+                $body = @{
+                    pipeline_name = $env:JOB_NAME
+                    build_number  = $env:BUILD_NUMBER
+                    log_text      = $log
+                } | ConvertTo-Json
+
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+
+                try {
+                    $resp = Invoke-RestMethod -Uri "http://localhost:8081/analyze-failure" `
+                        -Method Post -Body $bytes -ContentType "application/json"
+                    Write-Host "Explainer responded: $($resp.status)"
+                } catch {
+                    Write-Host "Could not reach explainer service: $_"
+                }
+            '''
             archiveArtifacts artifacts: '*.log', allowEmptyArchive: true
         }
         success {
