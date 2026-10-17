@@ -2,6 +2,13 @@ pipeline {
     agent any
 
     stages {
+        stage('Prepare') {
+            steps {
+                bat 'if exist build.log del /q build.log'
+                bat 'if exist test.log del /q test.log'
+            }
+        }
+
         stage('Build') {
             steps {
                 bat 'go build ./... > build.log 2>&1 || (type build.log & exit /b 1)'
