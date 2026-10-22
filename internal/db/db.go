@@ -96,3 +96,11 @@ func (s *Store) ListFailures(ctx context.Context, limit int) ([]models.Failure, 
 	}
 	return failures, rows.Err()
 }
+
+// UpdateAnalysis stores the AI output for a saved failure.
+func (s *Store) UpdateAnalysis(ctx context.Context, id int64, explanation, fix string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE failures SET ai_explanation = $1, fix_suggestion = $2 WHERE id = $3`,
+		explanation, fix, id)
+	return err
+}

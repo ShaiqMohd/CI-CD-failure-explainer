@@ -22,8 +22,9 @@ type Failure struct {
 
 // AnalyzeResponse is what our service sends back.
 type AnalyzeResponse struct {
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	ID       int64  `json:"id,omitempty"`
-	LogLines int    `json:"log_lines,omitempty"`
+	Status      string `json:"status"`
+	Message     string `json:"message"`
+	ID          int64  `json:"id,omitempty"`
+	LogLines    int    `json:"log_lines,omitempty"`
+	Explanation string `json:"explanation,omitempty"`
 }

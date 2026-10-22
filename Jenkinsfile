@@ -26,6 +26,8 @@ pipeline {
         failure {
             echo '=== BUILD FAILED: sending log to explainer service ==='
             powershell '''
+                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
                 $log = ""
                 foreach ($f in "build.log", "test.log") {
                     if (Test-Path $f) { $log += Get-Content $f -Raw }
@@ -41,8 +43,14 @@ pipeline {
 
                 try {
                     $resp = Invoke-RestMethod -Uri "http://localhost:8081/analyze-failure" `
-                        -Method Post -Body $bytes -ContentType "application/json"
-                    Write-Host "Explainer responded: $($resp.status)"
+                        -Method Post -Body $bytes -ContentType "application/json" -TimeoutSec 60
+                    Write-Host "Explainer responded: $($resp.status) - $($resp.message)"
+                    if ($resp.explanation) {
+                        Write-Host ""
+                        Write-Host "=== AI EXPLANATION ==="
+                        Write-Host $resp.explanation
+                        Write-Host "======================"
+                    }
                 } catch {
                     Write-Host "Could not reach explainer service: $_"
                 }

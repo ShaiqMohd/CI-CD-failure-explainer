@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/db"
+	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/llm"
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/models"
 )
 
@@ -18,11 +19,13 @@ const (
 	maxBodyBytes      = 1 << 20 // 1 MB request limit
 	maxStoredLogBytes = 8000    // how much of the log we keep
 	dbTimeout         = 5 * time.Second
+	llmTimeout        = 30 * time.Second
 )
 
 // Handler holds the dependencies the endpoints need.
 type Handler struct {
 	Store *db.Store
+	LLM   *llm.Client // nil when no LLM is configured
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
@@ -59,12 +62,12 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1. Save first, so the failure is never lost even if the AI step fails.
 	f := &models.Failure{
 		PipelineName: req.PipelineName,
 		BuildNumber:  req.BuildNumber,
 		LogExcerpt:   excerpt(req.LogText),
 	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancel()
 	if err := h.Store.InsertFailure(ctx, f); err != nil {
@@ -79,12 +82,40 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Failure saved: id=%d pipeline=%s build=%s log_lines=%d",
 		f.ID, f.PipelineName, f.BuildNumber, lines)
 
-	writeJSON(w, http.StatusCreated, models.AnalyzeResponse{
-		Status:   "received",
-		Message:  "failure saved; analysis not implemented yet",
-		ID:       f.ID,
-		LogLines: lines,
-	})
+	resp := models.AnalyzeResponse{
+		Status: "received", Message: "failure saved",
+		ID: f.ID, LogLines: lines,
+	}
+
+	if h.LLM == nil {
+		resp.Message = "failure saved; LLM not configured"
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
+	// 2. Ask the LLM. If it fails, the failure is still saved.
+	llmCtx, cancelLLM := context.WithTimeout(r.Context(), llmTimeout)
+	defer cancelLLM()
+	explanation, err := h.LLM.Analyze(llmCtx, f.PipelineName, f.BuildNumber, f.LogExcerpt)
+	if err != nil {
+		log.Printf("llm analysis failed for id=%d: %v", f.ID, err)
+		resp.Status = "saved"
+		resp.Message = "failure saved; AI analysis unavailable"
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
+	// 3. Store the analysis.
+	saveCtx, cancelSave := context.WithTimeout(r.Context(), dbTimeout)
+	defer cancelSave()
+	if err := h.Store.UpdateAnalysis(saveCtx, f.ID, explanation, ""); err != nil {
+		log.Printf("saving analysis failed for id=%d: %v", f.ID, err)
+	}
+
+	log.Printf("Analysis saved: id=%d", f.ID)
+	resp.Message = "failure saved and analyzed"
+	resp.Explanation = explanation
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (h *Handler) ListFailures(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +157,7 @@ func excerpt(s string) string {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }

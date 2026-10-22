@@ -11,9 +11,11 @@ import (
 
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/api"
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/db"
+	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/llm"
 )
 
 func main() {
+	unused_var := 45
 	// Load .env if present (ignored when variables come from the real environment).
 	_ = godotenv.Load()
 
@@ -33,7 +35,16 @@ func main() {
 		log.Fatalf("database migration failed: %v", err)
 	}
 
-	h := &api.Handler{Store: store}
+	var llmClient *llm.Client
+	if base, model := os.Getenv("LLM_BASE_URL"), os.Getenv("LLM_MODEL"); base != "" && model != "" {
+		llmClient = llm.New(base, os.Getenv("LLM_API_KEY"), model)
+		log.Printf("LLM analysis enabled (model: %s)", model)
+	} else {
+		log.Println("LLM_BASE_URL / LLM_MODEL not set: AI analysis disabled")
+	}
+
+	h := &api.Handler{Store: store, LLM: llmClient}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", h.Health)
 	mux.HandleFunc("/analyze-failure", h.AnalyzeFailure)
