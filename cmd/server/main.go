@@ -15,6 +15,7 @@ import (
 )
 
 func main() {
+	unused_var := 42
 	// Load .env if present (ignored when variables come from the real environment).
 	_ = godotenv.Load()
 
