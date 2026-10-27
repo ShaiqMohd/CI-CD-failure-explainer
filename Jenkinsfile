@@ -33,10 +33,28 @@ pipeline {
                     if (Test-Path $f) { $log += Get-Content $f -Raw }
                 }
 
+                # Find the first "file.go:LINE:COL" in the log and grab nearby source lines
+                $ctx = ""
+                if ($log -match "([^ :]+[.]go):([0-9]+):[0-9]+") {
+                    $file = $Matches[1]
+                    $line = [int]$Matches[2]
+                    if ((Test-Path $file) -and ($file -notmatch "[.][.]") -and ($file -notmatch "^[A-Za-z]:")) {
+                        $all = Get-Content $file
+                        $start = [Math]::Max(1, $line - 5)
+                        $end = [Math]::Min($all.Count, $line + 5)
+                        for ($i = $start; $i -le $end; $i++) {
+                            $mark = "  "
+                            if ($i -eq $line) { $mark = ">>" }
+                            $ctx += "$mark $i | $($all[$i-1])`n"
+                        }
+                    }
+                }
+
                 $body = @{
-                    pipeline_name = $env:JOB_NAME
-                    build_number  = $env:BUILD_NUMBER
-                    log_text      = $log
+                    pipeline_name  = $env:JOB_NAME
+                    build_number   = $env:BUILD_NUMBER
+                    log_text       = $log
+                    source_context = $ctx
                 } | ConvertTo-Json
 
                 $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
@@ -49,6 +67,11 @@ pipeline {
                         Write-Host ""
                         Write-Host "=== AI EXPLANATION ==="
                         Write-Host $resp.explanation
+                        if ($resp.fix) {
+                            Write-Host ""
+                            Write-Host "=== SUGGESTED FIX ==="
+                            Write-Host $resp.fix
+                        }
                         Write-Host "======================"
                     }
                 } catch {

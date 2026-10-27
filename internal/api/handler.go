@@ -13,6 +13,7 @@ import (
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/db"
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/llm"
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/models"
+	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/redact"
 )
 
 const (
@@ -20,6 +21,7 @@ const (
 	maxStoredLogBytes = 8000    // how much of the log we keep
 	dbTimeout         = 5 * time.Second
 	llmTimeout        = 30 * time.Second
+	maxSourceBytes    = 4000 // how much source context we accept
 )
 
 // Handler holds the dependencies the endpoints need.
@@ -62,6 +64,10 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Redact secrets BEFORE anything is stored or sent to the LLM.
+	req.LogText = redact.Text(req.LogText)
+	req.SourceContext = redact.Text(clip(req.SourceContext, maxSourceBytes))
+
 	// 1. Save first, so the failure is never lost even if the AI step fails.
 	f := &models.Failure{
 		PipelineName: req.PipelineName,
@@ -79,8 +85,8 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lines := strings.Count(req.LogText, "\n") + 1
-	log.Printf("Failure saved: id=%d pipeline=%s build=%s log_lines=%d",
-		f.ID, f.PipelineName, f.BuildNumber, lines)
+	log.Printf("Failure saved: id=%d pipeline=%s build=%s log_lines=%d source_context=%t",
+		f.ID, f.PipelineName, f.BuildNumber, lines, req.SourceContext != "")
 
 	resp := models.AnalyzeResponse{
 		Status: "received", Message: "failure saved",
@@ -96,7 +102,7 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 	// 2. Ask the LLM. If it fails, the failure is still saved.
 	llmCtx, cancelLLM := context.WithTimeout(r.Context(), llmTimeout)
 	defer cancelLLM()
-	explanation, err := h.LLM.Analyze(llmCtx, f.PipelineName, f.BuildNumber, f.LogExcerpt)
+	analysis, err := h.LLM.Analyze(llmCtx, f.PipelineName, f.BuildNumber, f.LogExcerpt, req.SourceContext)
 	if err != nil {
 		log.Printf("llm analysis failed for id=%d: %v", f.ID, err)
 		resp.Status = "saved"
@@ -105,16 +111,17 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Store the analysis.
+	// 3. Store explanation and fix in their own columns.
 	saveCtx, cancelSave := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancelSave()
-	if err := h.Store.UpdateAnalysis(saveCtx, f.ID, explanation, ""); err != nil {
+	if err := h.Store.UpdateAnalysis(saveCtx, f.ID, analysis.Explanation, analysis.Fix); err != nil {
 		log.Printf("saving analysis failed for id=%d: %v", f.ID, err)
 	}
 
 	log.Printf("Analysis saved: id=%d", f.ID)
 	resp.Message = "failure saved and analyzed"
-	resp.Explanation = explanation
+	resp.Explanation = analysis.Explanation
+	resp.Fix = analysis.Fix
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -160,4 +167,12 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// clip keeps at most n bytes of s, without leaving a broken UTF-8 character.
+func clip(s string, n int) string {
+	if len(s) > n {
+		s = s[:n]
+	}
+	return strings.ToValidUTF8(s, "")
 }

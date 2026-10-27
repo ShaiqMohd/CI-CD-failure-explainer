@@ -4,9 +4,10 @@ import "time"
 
 // FailureRequest is the JSON body Jenkins sends when a build fails.
 type FailureRequest struct {
-	PipelineName string `json:"pipeline_name"`
-	BuildNumber  string `json:"build_number"`
-	LogText      string `json:"log_text"`
+	PipelineName  string `json:"pipeline_name"`
+	BuildNumber   string `json:"build_number"`
+	LogText       string `json:"log_text"`
+	SourceContext string `json:"source_context"`
 }
 
 // Failure is one stored row in the failures table.
@@ -27,4 +28,5 @@ type AnalyzeResponse struct {
 	ID          int64  `json:"id,omitempty"`
 	LogLines    int    `json:"log_lines,omitempty"`
 	Explanation string `json:"explanation,omitempty"`
+	Fix         string `json:"fix,omitempty"`
 }
