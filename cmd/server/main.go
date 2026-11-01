@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -12,6 +13,7 @@ import (
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/api"
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/db"
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/llm"
+	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/slack"
 )
 
 func main() {
@@ -42,7 +44,17 @@ func main() {
 		log.Println("LLM_BASE_URL / LLM_MODEL not set: AI analysis disabled")
 	}
 
-	h := &api.Handler{Store: store, LLM: llmClient}
+	var slackClient *slack.Client
+	if u := os.Getenv("SLACK_WEBHOOK_URL"); strings.HasPrefix(u, "https://hooks.slack.com/") {
+		slackClient = slack.New(u)
+		log.Println("Slack notifications enabled")
+	} else if u != "" {
+		log.Println("SLACK_WEBHOOK_URL is set but is not a Slack webhook URL: Slack disabled")
+	} else {
+		log.Println("SLACK_WEBHOOK_URL not set: Slack notifications disabled")
+	}
+
+	h := &api.Handler{Store: store, LLM: llmClient, Slack: slackClient}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", h.Health)

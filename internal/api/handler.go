@@ -14,6 +14,7 @@ import (
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/llm"
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/models"
 	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/redact"
+	"github.com/ShaiqMohd/CI-CD-failure-explainer/internal/slack"
 )
 
 const (
@@ -28,6 +29,7 @@ const (
 type Handler struct {
 	Store *db.Store
 	LLM   *llm.Client // nil when no LLM is configured
+	Slack *slack.Client
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
@@ -92,9 +94,17 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 		Status: "received", Message: "failure saved",
 		ID: f.ID, LogLines: lines,
 	}
+	note := slack.Notification{
+		Pipeline: f.PipelineName,
+		Build:    f.BuildNumber,
+		BuildURL: safeURL(req.BuildURL),
+	}
 
 	if h.LLM == nil {
 		resp.Message = "failure saved; LLM not configured"
+		note.AIUnavailable = true
+		note.LogTail = tailOf(f.LogExcerpt, 600)
+		h.notifySlack(note)
 		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
@@ -107,6 +117,9 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 		log.Printf("llm analysis failed for id=%d: %v", f.ID, err)
 		resp.Status = "saved"
 		resp.Message = "failure saved; AI analysis unavailable"
+		note.AIUnavailable = true
+		note.LogTail = tailOf(f.LogExcerpt, 600)
+		h.notifySlack(note)
 		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
@@ -119,6 +132,10 @@ func (h *Handler) AnalyzeFailure(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Analysis saved: id=%d", f.ID)
+	note.Explanation = analysis.Explanation
+	note.Fix = analysis.Fix
+	h.notifySlack(note)
+
 	resp.Message = "failure saved and analyzed"
 	resp.Explanation = analysis.Explanation
 	resp.Fix = analysis.Fix
@@ -173,6 +190,42 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 func clip(s string, n int) string {
 	if len(s) > n {
 		s = s[:n]
+	}
+	return strings.ToValidUTF8(s, "")
+}
+
+// notifySlack posts in the background so Jenkins never waits for Slack,
+// and a Slack outage can never affect the API response.
+func (h *Handler) notifySlack(n slack.Notification) {
+	if h.Slack == nil {
+		return
+	}
+	go func() {
+		// The request context ends when the response is sent, so use our own.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := h.Slack.Notify(ctx, n); err != nil {
+			log.Printf("slack notification failed: %v", err)
+		}
+	}()
+}
+
+// safeURL accepts only plain http(s) links, since it ends up in a Slack message.
+func safeURL(u string) string {
+	u = strings.TrimSpace(u)
+	if len(u) > 500 || !(strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")) {
+		return ""
+	}
+	if strings.ContainsAny(u, " <>|\n\r\t") {
+		return ""
+	}
+	return u
+}
+
+// tailOf keeps the last n bytes of s (where build errors usually are).
+func tailOf(s string, n int) string {
+	if len(s) > n {
+		s = s[len(s)-n:]
 	}
 	return strings.ToValidUTF8(s, "")
 }

@@ -8,6 +8,7 @@ type FailureRequest struct {
 	BuildNumber   string `json:"build_number"`
 	LogText       string `json:"log_text"`
 	SourceContext string `json:"source_context"`
+	BuildURL      string `json:"build_url"`
 }
 
 // Failure is one stored row in the failures table.

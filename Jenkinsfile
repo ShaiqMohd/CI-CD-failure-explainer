@@ -53,6 +53,7 @@ pipeline {
                 $body = @{
                     pipeline_name  = $env:JOB_NAME
                     build_number   = $env:BUILD_NUMBER
+                    build_url      = $env:BUILD_URL 
                     log_text       = $log
                     source_context = $ctx
                 } | ConvertTo-Json
